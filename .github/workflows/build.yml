@@ -16,6 +16,9 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Prepare web files
+                mkdir -p assets
+          cp icon.png assets/icon-only.png
+          npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
         run: |
           mkdir -p www
           cp *.html www/
