@@ -19,12 +19,55 @@ jobs:
         run: |
           mkdir -p www
           cp *.html www/
+          cat >> www/index.html <<'EOF'
+          <script>window.print=function(){try{window.Capacitor.Plugins.Print.print();}catch(e){alert('Print error: '+e);}};</script>
+          EOF
       - name: Create Android app
         run: |
           npm init -y
-          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8
           npx cap init "Rai Education" com.raieducation.app --web-dir www
           npx cap add android
+      - name: Add print support
+        run: |
+          D=android/app/src/main/java/com/raieducation/app
+          cat > $D/PrintPlugin.java <<'EOF'
+          package com.raieducation.app;
+          import android.content.Context;
+          import android.print.PrintAttributes;
+          import android.print.PrintDocumentAdapter;
+          import android.print.PrintManager;
+          import android.webkit.WebView;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          @CapacitorPlugin(name = "Print")
+          public class PrintPlugin extends Plugin {
+            @PluginMethod
+            public void print(PluginCall call) {
+              getActivity().runOnUiThread(() -> {
+                WebView wv = getBridge().getWebView();
+                PrintManager pm = (PrintManager) getActivity().getSystemService(Context.PRINT_SERVICE);
+                PrintDocumentAdapter ad = wv.createPrintDocumentAdapter("Rai Education");
+                pm.print("Rai Education", ad, new PrintAttributes.Builder().build());
+                call.resolve();
+              });
+            }
+          }
+          EOF
+          cat > $D/MainActivity.java <<'EOF'
+          package com.raieducation.app;
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              registerPlugin(PrintPlugin.class);
+              super.onCreate(savedInstanceState);
+            }
+          }
+          EOF
           npx cap sync android
       - name: Build APK
         run: |
