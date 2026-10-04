@@ -26,9 +26,10 @@ jobs:
           <script>window.print=function(){try{window.Capacitor.Plugins.Print.print();}catch(e){alert('Print error: '+e);}};</script>
           EOF
       - name: Create Android app
-                mkdir -p assets
-          cp icon.png assets/icon-only.png
-          npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
+                      if [ -f icon.png ]; then
+            mkdir -p assets && cp icon.png assets/icon-only.png
+            npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
+          fi
         run: |
           npm init -y
           npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8
