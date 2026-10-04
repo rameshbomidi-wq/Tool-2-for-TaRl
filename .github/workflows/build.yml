@@ -16,41 +16,77 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Prepare web files
-                mkdir -p assets
-          cp icon.png assets/icon-only.png
-          npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
         run: |
           mkdir -p www
           cp *.html www/
-          cat >> www/index.html <<'EOF'
-          <script>window.print=function(){try{window.Capacitor.Plugins.Print.print();}catch(e){alert('Print error: '+e);}};</script>
+          cat > www/rai-native.js <<'EOF'
+          (function () {
+            var P = function () { return window.Capacitor.Plugins.Rai; };
+            window.print = function () {
+              try { P().print(); } catch (e) { alert('Print error: ' + e); }
+            };
+            var rv = URL.revokeObjectURL;
+            URL.revokeObjectURL = function (u) { setTimeout(function () { rv.call(URL, u); }, 60000); };
+            function save(name, url) {
+              fetch(url).then(function (r) { return r.blob(); }).then(function (b) {
+                return new Promise(function (res) {
+                  var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.readAsDataURL(b);
+                });
+              }).then(function (d) {
+                var i = d.indexOf(',');
+                var mime = d.substring(5, d.indexOf(';')) || 'application/octet-stream';
+                return P().saveFile({ name: name, data: d.substring(i + 1), mime: mime });
+              }).then(function () {
+                alert('Downloads ఫోల్డర్‌లో సేవ్ అయింది: ' + name);
+              }).catch(function (e) { alert('Save error: ' + e); });
+            }
+            var oc = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () {
+              if (this.hasAttribute('download')) { save(this.getAttribute('download') || 'file', this.href); return; }
+              return oc.call(this);
+            };
+            document.addEventListener('click', function (e) {
+              var a = e.target.closest ? e.target.closest('a[download]') : null;
+              if (a) { e.preventDefault(); save(a.getAttribute('download') || 'file', a.href); }
+            }, true);
+          })();
           EOF
+          echo '<script src="rai-native.js"></script>' >> www/index.html
       - name: Create Android app
-                      if [ -f icon.png ]; then
-            mkdir -p assets && cp icon.png assets/icon-only.png
-            npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
-          fi
         run: |
           npm init -y
           npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8
           npx cap init "Rai Education" com.raieducation.app --web-dir www
           npx cap add android
-      - name: Add print support
+          if [ -f icon.png ]; then
+            mkdir -p assets && cp icon.png assets/icon-only.png
+            npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff'
+          fi
+      - name: Add print and save support
         run: |
           D=android/app/src/main/java/com/raieducation/app
-          cat > $D/PrintPlugin.java <<'EOF'
+          cat > $D/RaiPlugin.java <<'EOF'
           package com.raieducation.app;
+          import android.content.ContentValues;
           import android.content.Context;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Environment;
           import android.print.PrintAttributes;
           import android.print.PrintDocumentAdapter;
           import android.print.PrintManager;
+          import android.provider.MediaStore;
+          import android.util.Base64;
           import android.webkit.WebView;
           import com.getcapacitor.Plugin;
           import com.getcapacitor.PluginCall;
           import com.getcapacitor.PluginMethod;
           import com.getcapacitor.annotation.CapacitorPlugin;
-          @CapacitorPlugin(name = "Print")
-          public class PrintPlugin extends Plugin {
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.OutputStream;
+          @CapacitorPlugin(name = "Rai")
+          public class RaiPlugin extends Plugin {
             @PluginMethod
             public void print(PluginCall call) {
               getActivity().runOnUiThread(() -> {
@@ -61,6 +97,30 @@ jobs:
                 call.resolve();
               });
             }
+            @PluginMethod
+            public void saveFile(PluginCall call) {
+              String name = call.getString("name", "file");
+              String data = call.getString("data", "");
+              String mime = call.getString("mime", "application/octet-stream");
+              try {
+                byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                Context ctx = getContext();
+                if (Build.VERSION.SDK_INT >= 29) {
+                  ContentValues v = new ContentValues();
+                  v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                  v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                  v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                  Uri uri = ctx.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                  try (OutputStream os = ctx.getContentResolver().openOutputStream(uri)) { os.write(bytes); }
+                } else {
+                  File f = new File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), name);
+                  try (FileOutputStream os = new FileOutputStream(f)) { os.write(bytes); }
+                }
+                call.resolve();
+              } catch (Exception e) {
+                call.reject(e.getMessage());
+              }
+            }
           }
           EOF
           cat > $D/MainActivity.java <<'EOF'
@@ -70,7 +130,7 @@ jobs:
           public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
-              registerPlugin(PrintPlugin.class);
+              registerPlugin(RaiPlugin.class);
               super.onCreate(savedInstanceState);
             }
           }
